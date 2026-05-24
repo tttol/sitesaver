@@ -1,0 +1,61 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+permissions:
+  contents: write
+jobs:
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset_name: macos-aarch64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset_name: macos-x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Test
+        run: cargo test --locked
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package binary
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          asset="sitesaver-${tag}-${{ matrix.asset_name }}.tar.gz"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/sitesaver" dist/sitesaver
+          tar -czf "${asset}" -C dist sitesaver
+          shasum -a 256 "${asset}" > "${asset}.sha256"
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sitesaver-${{ matrix.asset_name }}
+          path: |
+            sitesaver-${{ github.ref_name }}-${{ matrix.asset_name }}.tar.gz
+            sitesaver-${{ github.ref_name }}-${{ matrix.asset_name }}.tar.gz.sha256
+          if-no-files-found: error
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-assets/* --title "${GITHUB_REF_NAME}" --notes "Binary release for ${GITHUB_REF_NAME}"
